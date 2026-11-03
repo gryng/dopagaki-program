@@ -282,7 +282,7 @@
     <button class="inapp-open" id="unlockOk" type="button">OK</button>
   </section>
 </div>
-<div class="ver">v1.01</div>
+<div class="ver">v1.02</div>
 
 <script type="module">
   // LINE's in-app browser: offer to reopen in the phone's own browser
@@ -1038,6 +1038,8 @@
     picked = t.id
     saveTracks()
     applyBgm(false)
+    // and the sky jumps ahead 3–6 hours, for a change of scenery with the new song
+    if (api) api.goToTime(api.getHours() + 3 + Math.random() * 3, null, true)
     renderMusic()
     showUnlock('新しい音楽を手に入れました', [t.title], bgmOn ? 'いま流れているのが、この曲です' : 'サウンドをオンにすると聴けます')
   }
