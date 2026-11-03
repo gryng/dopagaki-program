@@ -1,0 +1,1413 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="海の上を飛びながら、AIアシスタントと記憶を思い出すチルなトレーニングゲーム。">
+<title>ドパガキ老化防止プログラム</title>
+<style>
+  /* Layout: full-bleed canvas, one faint hint, nothing else */
+  :root {
+    --ink: #f4efe6;
+    --ink-dim: rgba(244, 239, 230, 0.6);
+    --night: #0b1020;
+    --font-ui: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--night);
+    color: var(--ink);
+    overflow: hidden;
+    font-family: var(--font-ui);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  canvas#sky {
+    position: fixed; inset: 0; width: 100vw; height: 100vh;
+    display: block; touch-action: none; cursor: grab;
+  }
+  canvas#sky:active { cursor: grabbing; }
+  .msg {
+    position: fixed; left: 0; right: 0;
+    bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+    text-align: center; font-size: 15px; letter-spacing: 0.12em;
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
+    pointer-events: none; transition: opacity 2.4s ease;
+    padding-inline: 16px;
+  }
+  .msg small { display: block; margin-top: 6px; font-size: 12px; color: var(--ink-dim); letter-spacing: 0.08em; }
+  .msg.gone { opacity: 0; }
+  .ver {
+    position: fixed;
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    font-size: 10px; color: var(--ink-dim); opacity: 0.6;
+    pointer-events: none; letter-spacing: 0.1em;
+  }
+  .clock {
+    position: fixed;
+    top: calc(18px + env(safe-area-inset-top, 0px));
+    left: 0; right: 0; text-align: center;
+    font-size: 22px; letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
+    pointer-events: none; opacity: 0; transition: opacity 0.6s ease;
+  }
+  .clock.on { opacity: 0.9; }
+  /* pomodoro: a small glass pill in the top-left corner */
+  .pomo {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    left: calc(14px + env(safe-area-inset-left, 0px));
+    z-index: 5;
+    display: flex; align-items: center; gap: 10px;
+    height: 44px; padding: 0 16px 0 8px; border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(20, 24, 36, 0.32);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    color: var(--ink); font: inherit; cursor: pointer;
+  }
+  .pomo:focus-visible { outline: 2px solid rgba(255, 236, 200, 0.85); outline-offset: 2px; }
+  .pomo svg { width: 28px; height: 28px; transform: rotate(-90deg); }
+  .pomo .track { stroke: rgba(255, 255, 255, 0.18); }
+  .pomo .bar { stroke: #f3d9a8; transition: stroke 0.6s ease; }
+  .pomo.break .bar { stroke: #9fe0cf; }
+  .pomo.paused { opacity: 0.6; }
+  .pomo-text { display: flex; flex-direction: column; line-height: 1.15; text-align: left; }
+  .pomo-time { font-size: 17px; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
+  .pomo-label { font-size: 10px; letter-spacing: 0.14em; color: var(--ink-dim); }
+  .pomo-dots { display: flex; gap: 4px; margin-left: 2px; }
+  .pomo-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); }
+  .pomo-dots i.done { background: #f3d9a8; }
+  .toast {
+    position: fixed; left: 0; right: 0;
+    top: calc(40% + env(safe-area-inset-top, 0px));
+    text-align: center; font-size: 20px; letter-spacing: 0.16em;
+    text-shadow: 0 1px 16px rgba(0, 0, 0, 0.45);
+    pointer-events: none; opacity: 0; transition: opacity 1.2s ease;
+    padding-inline: 16px;
+  }
+  .toast small { display: block; margin-top: 8px; font-size: 12px; color: var(--ink-dim); letter-spacing: 0.1em; }
+  .toast.on { opacity: 1; }
+  /* the fairy's words: soft glowing text floating just above it */
+  .speech {
+    position: fixed; left: 0; top: 0; z-index: 3;
+    max-width: min(78vw, 22em);
+    font-size: 15px; line-height: 1.7; letter-spacing: 0.08em;
+    text-align: center; text-wrap: balance;
+    color: #fff8ec;
+    text-shadow: 0 0 10px rgba(255, 214, 150, 0.55), 0 1px 14px rgba(0, 0, 0, 0.5);
+    pointer-events: none; opacity: 0;
+    transition: opacity 1.6s ease;
+    will-change: transform, opacity;
+  }
+  .speech.on { opacity: 1; transition: opacity 0.25s ease; }
+  /* words being "decoded": scrambled glyphs in a cool tint that settle into
+     the real character and warm up; a small block cursor rides the front */
+  .speech .ch { position: relative; transition: color 0.5s ease, text-shadow 0.5s ease; }
+  .speech .ch.wait { visibility: hidden; }
+  .speech .ch.scr {
+    color: #a8ecff;
+    text-shadow: 0 0 8px rgba(120, 220, 255, 0.85), 0 1px 14px rgba(0, 0, 0, 0.5);
+    transition: none;
+  }
+  .speech .ch.cur::after {
+    content: ''; position: absolute; left: 100%; top: 0.28em; bottom: 0.22em; width: 0.42em; margin-left: 0.08em;
+    background: rgba(168, 236, 255, 0.85); box-shadow: 0 0 8px rgba(120, 220, 255, 0.9);
+  }
+  .speech .ch.idle::after {
+    content: ''; position: absolute; left: 100%; top: 0.28em; bottom: 0.22em; width: 0.42em; margin-left: 0.08em;
+    background: rgba(168, 236, 255, 0.7); animation: blink 1s steps(1) 2 forwards;
+  }
+  @keyframes blink { 0% { opacity: 1 } 50% { opacity: 0 } 100% { opacity: 0 } }
+  .speech small { display: block; margin-top: 6px; font-size: 11px; letter-spacing: 0.14em; color: rgba(255, 248, 236, 0.7); }
+  @media (min-width: 700px) { .speech { font-size: 17px; } }
+  /* LINE's in-app browser: a glass card asking to reopen in Safari / Chrome */
+  .inapp {
+    position: fixed; inset: 0; z-index: 20;
+    display: grid; place-items: center;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: rgba(8, 10, 18, 0.45);
+  }
+  .inapp[hidden] { display: none; }
+  [hidden] { display: none !important; }
+  .inapp-card {
+    max-width: 22em; padding: 26px 22px 18px; border-radius: 20px;
+    display: flex; flex-direction: column; gap: 14px; text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(18, 22, 34, 0.62);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+  }
+  .inapp-card h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: 0.1em; text-wrap: balance; }
+  .inapp-card p { margin: 0; font-size: 13px; line-height: 1.8; color: var(--ink-dim); letter-spacing: 0.04em; }
+  .inapp-open {
+    height: 50px; border: 0; border-radius: 14px; cursor: pointer;
+    font: inherit; font-size: 16px; letter-spacing: 0.12em;
+    color: #1d1a14; background: #f3d9a8;
+  }
+  .inapp-stay { border: 0; background: none; color: var(--ink-dim); font: inherit; font-size: 13px; padding: 8px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .inapp-open:focus-visible, .inapp-stay:focus-visible { outline: 2px solid rgba(255, 236, 200, 0.85); outline-offset: 2px; }
+  /* menu: a small glass button in the top-right corner, opening a list of times */
+  .menu {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    right: calc(14px + env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+    z-index: 5;
+  }
+  .menu-btn {
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(20, 24, 36, 0.32);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    color: var(--ink); cursor: pointer;
+    display: grid; place-items: center; padding: 0;
+    transition: background 0.2s ease, transform 0.2s ease;
+  }
+  .menu-btn:hover { background: rgba(20, 24, 36, 0.48); }
+  .menu-btn:focus-visible, .time-opt:focus-visible { outline: 2px solid rgba(255, 236, 200, 0.85); outline-offset: 2px; }
+  .menu-btn svg { width: 22px; height: 22px; }
+  .panel {
+    min-width: 190px;
+    padding: 8px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(18, 22, 34, 0.5);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex; flex-direction: column; gap: 2px;
+    transform-origin: top right;
+    animation: pop 0.18s ease;
+    /* the list got long: scroll inside the panel on short screens */
+    max-height: calc(100vh - 90px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  @keyframes pop { from { opacity: 0; transform: scale(0.96); } }
+  /* music: its own button just left of the menu button */
+  .music {
+    position: fixed;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    right: calc(68px + env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+    z-index: 5;
+  }
+  .music .panel { min-width: 230px; }
+  .time-opt.locked { cursor: default; opacity: 0.5; box-sizing: border-box; }
+  .time-opt.locked:hover { background: none; }
+  .time-opt .lock { display: grid; place-items: center; }
+  .music-note { margin: 6px 10px 4px; font-size: 11px; line-height: 1.6; color: var(--ink-dim); letter-spacing: 0.04em; }
+  .unlock-kicker { font-size: 11px !important; letter-spacing: 0.3em !important; color: #f3d9a8 !important; }
+  .unlock-songs { font-size: 16px !important; color: var(--ink) !important; line-height: 1.9 !important; }
+  .panel h2 {
+    margin: 4px 10px 6px; font-size: 11px; font-weight: 500;
+    letter-spacing: 0.16em; color: var(--ink-dim);
+  }
+  .time-opt {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+    width: 100%; padding: 10px 12px; border: 0; border-radius: 10px;
+    background: transparent; color: var(--ink); cursor: pointer;
+    font: inherit; font-size: 15px; letter-spacing: 0.08em; text-align: left;
+  }
+  .time-opt span { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+  .time-opt:hover { background: rgba(255, 255, 255, 0.08); }
+  .time-opt[aria-current="true"] { background: rgba(255, 236, 200, 0.14); }
+  .check-opt input { width: 18px; height: 18px; margin: 0; accent-color: #f3d9a8; flex: none; }
+  .check-opt { cursor: pointer; align-items: center; box-sizing: border-box; }
+  .panel hr { border: 0; height: 1px; margin: 6px 8px; background: rgba(255, 255, 255, 0.12); }
+  .time-opt small { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-dim); letter-spacing: 0.04em; }
+  @media (prefers-reduced-motion: reduce) { .msg, .clock { transition: none; } .panel { animation: none; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500&display=swap">
+
+<canvas id="sky"></canvas>
+<div class="msg" id="msg">空を計算しています…</div>
+<div class="clock" id="clock" aria-live="polite"></div>
+<div class="toast" id="toast" role="status"></div>
+<div class="speech" id="speech" aria-live="polite"></div>
+<div class="inapp" id="inapp" hidden>
+  <section class="inapp-card" role="dialog" aria-modal="true" aria-labelledby="inappH">
+    <h2 id="inappH">Safariで開いてください</h2>
+    <p>LINEの中のブラウザだと、空や海がうまく描けないことがあります。SafariやChromeで開くと、きれいに遊べます。</p>
+    <button class="inapp-open" id="inappOpen" type="button">Safariで開く</button>
+    <button class="inapp-stay" id="inappStay" type="button">このまま遊ぶ</button>
+  </section>
+</div>
+<div class="inapp" id="soundAsk" hidden>
+  <section class="inapp-card" role="dialog" aria-modal="true" aria-labelledby="soundAskH">
+    <h2 id="soundAskH">音を出しますか？</h2>
+    <p>静かな音楽と、小さな効果音が流れます。あとからメニューで変えられます。</p>
+    <button class="inapp-open" id="soundOn" type="button">音を出す</button>
+    <button class="inapp-stay" id="soundOff" type="button">音なしで遊ぶ</button>
+  </section>
+</div>
+<button class="pomo" id="pomo" type="button" hidden aria-label="ポモドーロタイマー（タップで一時停止・再開）">
+  <svg viewBox="0 0 36 36" aria-hidden="true">
+    <circle class="track" cx="18" cy="18" r="15" fill="none" stroke-width="3"/>
+    <circle class="bar" id="pomoBar" cx="18" cy="18" r="15" fill="none" stroke-width="3" stroke-linecap="round" stroke-dasharray="94.25" stroke-dashoffset="0"/>
+  </svg>
+  <span class="pomo-text"><span class="pomo-time" id="pomoTime">25:00</span><span class="pomo-label" id="pomoLabel">集中</span></span>
+  <span class="pomo-dots" id="pomoDots"><i></i><i></i><i></i><i></i></span>
+</button>
+<nav class="menu" id="menu" hidden>
+  <button class="menu-btn" id="menuBtn" type="button" aria-label="メニュー" aria-expanded="false" aria-controls="panel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.2"/>
+      <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>
+    </svg>
+  </button>
+  <div class="panel" id="panel" hidden>
+    <h2 id="timeTitle">時間帯</h2>
+  </div>
+</nav>
+<nav class="music" id="music" hidden>
+  <button class="menu-btn" id="musicBtn" type="button" aria-label="BGMをえらぶ" aria-expanded="false" aria-controls="musicPanel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9 17.5V6.2l10-2.1v11.3"/><circle cx="6.6" cy="17.5" r="2.4"/><circle cx="16.6" cy="15.4" r="2.4"/>
+    </svg>
+  </button>
+  <div class="panel" id="musicPanel" hidden></div>
+</nav>
+<div class="inapp" id="unlock" hidden>
+  <section class="inapp-card" role="dialog" aria-modal="true" aria-labelledby="unlockH">
+    <p class="unlock-kicker">NEW MUSIC</p>
+    <h2 id="unlockH"></h2>
+    <p class="unlock-songs" id="unlockSongs"></p>
+    <p id="unlockP"></p>
+    <button class="inapp-open" id="unlockOk" type="button">OK</button>
+  </section>
+</div>
+<div class="ver">v1.01</div>
+
+<script type="module">
+  // LINE's in-app browser: offer to reopen in the phone's own browser
+  // (LINE opens a link in the default browser when it has openExternalBrowser=1)
+  if ((/\bLine\//i.test(navigator.userAgent) || location.hash === '#inapptest') && !/[?&]openExternalBrowser=1/.test(location.search)) {
+    const box = document.getElementById('inapp')
+    box.hidden = false
+    box.addEventListener('pointerdown', e => e.stopPropagation())
+    document.getElementById('inappOpen').addEventListener('click', () => {
+      const u = new URL(location.href)
+      u.searchParams.set('openExternalBrowser', '1')
+      location.href = u.toString()
+    })
+    document.getElementById('inappStay').addEventListener('click', () => { box.hidden = true })
+  }
+  const msg = document.getElementById('msg')
+  const clock = document.getElementById('clock')
+  const menu = document.getElementById('menu')
+  const btn = document.getElementById('menuBtn')
+  const panel = document.getElementById('panel')
+  let hinted = false, clockTimer = 0
+  const hasKeys = matchMedia('(hover: hover) and (pointer: fine)').matches
+  const fmt = h => Math.floor(h) + ':' + String(Math.floor((h % 1) * 60)).padStart(2, '0')
+
+  function onEvent(state, value) {
+    if (state === 'ready') {
+      msg.innerHTML = hasKeys
+        ? 'ドラッグか矢印キーで、かたむける<small>Space で加速　Q / E で時間を戻す・進める</small>'
+        : 'ドラッグで、かたむける<small>2本指で加速　下を向くと速くなります</small>'
+      if (hinted) msg.classList.add('gone')
+    } else if (state === 'time') {
+      clock.textContent = fmt(value)
+      clock.classList.add('on')
+      clearTimeout(clockTimer)
+      clockTimer = setTimeout(() => clock.classList.remove('on'), 1500)
+    } else if (state === 'input' && !hinted) {
+      hinted = true
+      setTimeout(() => msg.classList.add('gone'), 1200)
+    }
+  }
+
+  // high quality (simulated waves): off by default, remembered per browser
+  let hq = false
+  try { hq = localStorage.getItem('sora-hq') === 'on' } catch (_) {}
+  if (location.hash === '#hq') hq = true
+
+  let start, api, opts = [], q, pomoItem
+
+  // ---------------- the fairy talks ----------------
+  // Lines drift by on their own at a slow pace; nothing to tap.
+  // The fairy is the "ドパガキ老化防止プログラム": it rescues people stuck on
+  // short videos with chill time and memory training. It speaks like a polite
+  // AI assistant: 私 / あなた, です・ます.
+  const INTRO = [
+    'こんにちは。',
+    '「ドパガキ老化防止プログラム」へようこそ。',
+    '私は未来から来ました。',
+    '未来では人類のドパガキ化が進み、人類は滅びました。',
+    '人類の滅亡を防ぐために、一緒にトレーニングしましょう。',
+    'まずは、ショート動画から少し離れましょう。私がサポートします。',
+    'なお、セリフ送りのボタンはありません。',
+    'このプログラムは、のんびり過ごすことを目的としています。',
+    '記憶を思い出すことは、脳の老化防止に役立つとされています。',
+    'これから、最近のことと少し昔のことを、一緒に思い出していきましょう。',
+    '所要時間は5分から10分程度です。',
+    'それでは、プログラムを開始します。',
+    '質問が表示されたら、思い出せたタイミングで私をタップしてください。'
+  ]
+  // Q(...) lines are questions: they stay until you tap the fairy.
+  // GO(...) moves the sky to the next time of day (and turns you toward it).
+  const Q = t => ({ t, q: true })
+  const QC = t => ({ t, q: true, ctx: true }) // only makes sense right after the line before it
+  const GO = id => ({ go: id })
+  // Five questions per chapter; each chapter has its own time of day and theme.
+  const CHAPTERS = [
+    { // 昼: the last few days
+      lines: [
+        Q('一昨日の夕食は何でしたか？'),
+        '思い出せなくても問題ありません。ゆっくりで大丈夫です。',
+        Q('最近、声を出して笑ったのはいつですか？'),
+        QC('そのとき、誰と一緒でしたか？'),
+        'ここで少し休憩しましょう。風が心地よいですね。',
+        Q('最近買ってよかったものはありますか？'),
+        Q('最近驚いたことはありますか？')
+      ],
+      outro: ['ウォーミングアップが完了しました。', '時間を少し進めます。', GO('sunset'), '夕方になりました。', 'ここからは、少し前の世の中の出来事を思い出してみましょう。']
+    },
+    { // 夕焼け: news and trends from a year or two ago, just on the edge of forgetting
+      lines: [
+        Q('去年の流行語大賞を覚えていますか？'),
+        Q('去年の今ごろ、話題になっていたニュースは何でしたか？'),
+        '正解を確認する必要はありません。思い出そうとすること自体がトレーニングです。',
+        Q('去年いちばん流行していた曲を、口ずさめますか？'),
+        Q('去年の大河ドラマのタイトルを思い出せますか？'),
+        'ありましたね、そういうもの。',
+        Q('一昨年の流行語大賞は思い出せますか？')
+      ],
+      outro: ['夕焼け、きれいでしたね。', 'これから空が暗くなっていきます。', GO('night'), '星がよく見えますね。', 'ここからは、あなたの年齢を半分にして考えてみましょう。', '現在30歳の場合、15歳ごろが対象です。', 'その年齢のころのことを、思い出してみてください。']
+    },
+    { // 夜: half your age
+      lines: [
+        Q('年齢が半分のころ、どこに住んでいましたか？'),
+        QC('そのころの部屋のカーテンは、何色でしたか？'),
+        'ぼんやりした記憶でも大丈夫です。',
+        QC('そのころ、いちばん仲がよかったのは誰ですか？'),
+        QC('その年齢のころ、夢中になっていたものは何ですか？'),
+        '順調です。脳がほぐれてきたようですね。',
+        QC('そのころ、いちばんよく通ったお店はどこですか？')
+      ],
+      outro: ['夜のトレーニングでは、たくさん思い出せましたね。', '時間を進めて、朝を迎えましょう。', GO('dawn'), '夜明けです。', '最後は、年齢を4分の1にして考えてみましょう。', '現在30歳の場合、7歳ごろが対象です。', '幼いころの記憶を、たどってみましょう。']
+    },
+    { // 夜明け: a quarter of your age
+      lines: [
+        Q('年齢が4分の1のころ、どこでよく遊んでいましたか？'),
+        QC('そのころ、好きだった食べ物は何ですか？'),
+        '肩の力を抜いて、深呼吸をしてみましょう。',
+        QC('そのころ、お気に入りのおもちゃは何でしたか？'),
+        QC('そのころ、誰によく遊んでもらっていましたか？'),
+        '思い出す作業は、意外と脳を使います。',
+        QC('そのころ、なぜか流行していたものはありますか？')
+      ],
+      outro: ['本日のトレーニングは、これですべて終了です。', '記憶データを保存しました。', '老化防止に、きっと効果があったと思います。', GO('noon'), '引き続き、のんびり飛行をお楽しみください。']
+    }
+  ]
+  const STORY = CHAPTERS.flatMap(c => [...c.lines, ...c.outro])
+  // Each chapter owns a stretch of the day, from its own time to the next
+  // chapter's. The sky keeps drifting, but stops 70% of the way, so taking
+  // your time never pushes the sky into the next chapter's scenery.
+  const CHAPTER_TIMES = ['noon', 'sunset', 'night', 'dawn']
+  function capChapter(id, startAbs) {
+    const i = CHAPTER_TIMES.indexOf(id)
+    const hourOf = k => api.presets.find(x => x.id === k).hours
+    const next = CHAPTER_TIMES[(i + 1) % CHAPTER_TIMES.length]
+    const span = (((hourOf(next) - hourOf(id)) % 24) + 24) % 24
+    talk.capValue = startAbs + span * 0.7
+    api.setTimeCap(talk.capValue)
+  }
+  // what the assistant says after you tap: brief and matter-of-fact
+  const PRAISE = [
+    '記録しました', '回答を受け付けました', '順調です', '素晴らしいです', '記憶データを更新しました',
+    'よく思い出せましたね', 'いいペースです', '記憶の読み込みに成功しました', '確認しました',
+    '脳が活性化しています', 'スムーズですね', 'お見事です', '記憶を保存しました', 'ありがとうございます',
+    '思い出す力、良好です', 'この調子で続けましょう', '次の質問に進みます', 'その調子です'
+  ]
+  // these look ahead to more questions, so not after a chapter's last one
+  const PRAISE_ONWARD = ['この調子で続けましょう', '次の質問に進みます', 'その調子です']
+  let praiseBag = []
+  function nextPraise() {
+    // every line once before any repeats
+    const last = lastQuestionOfChapter()
+    if (!praiseBag.length) praiseBag = [...PRAISE].sort(() => Math.random() - 0.5)
+    if (last) {
+      const k = praiseBag.findLastIndex(t => !PRAISE_ONWARD.includes(t))
+      if (k >= 0) return praiseBag.splice(k, 1)[0]
+    }
+    return praiseBag.pop()
+  }
+  // in the campaign, is there no other question before the sky moves on?
+  function lastQuestionOfChapter() {
+    if (talk.mode !== 'campaign' || !talk.introDone) return false
+    for (let j = talk.i; j < STORY.length; j++) {
+      const l = STORY[j]
+      if (l?.q) return false
+      if (l?.go) return true
+    }
+    return true
+  }
+
+  const speech = document.getElementById('speech')
+  // campaign: the greeting and the four chapters, once through to the second noon.
+  // free: no talking (unless endless training is on); time of day can be chosen.
+  let saved = {}
+  try { saved = { done: localStorage.getItem('sora-campaign') === 'done', endless: localStorage.getItem('sora-endless') === 'on' } } catch (_) {}
+  const talk = {
+    mode: saved.done || location.hash === '#free' ? 'free' : 'campaign',
+    endless: !!saved.endless,
+    queue: [], i: 0, introDone: location.hash === '#talktest' || location.hash === '#talkfast', pos: null,
+    chapter: 'noon', last: null, cur: null
+  }
+  // endless training: the chapters' stand-alone questions plus these 50, in the
+  // same spirit as chapters 1–2 (the last few days, the last year or two), and
+  // a few concrete ones from long ago
+  const EXTRA_Q = [
+    Q('昨日の昼食は何でしたか？'),
+    Q('今朝、最初にスマホで見たものは何でしたか？'),
+    Q('先週の土曜日は、何をしていましたか？'),
+    Q('最後にコンビニで買ったものは何ですか？'),
+    Q('最近の会話で、おもしろかったものはありますか？'),
+    Q('最後に送ったメッセージは、誰に何と送りましたか？'),
+    Q('今週いちばん歩いたのは何曜日ですか？'),
+    Q('最近観た動画で、内容を覚えているものはありますか？'),
+    Q('最近、ちょっとした失敗はありましたか？'),
+    Q('先週食べたもので、いちばんおいしかったものは何ですか？'),
+    Q('最後に電話で話した相手は誰ですか？'),
+    Q('最近、つい買ってしまったものはありますか？'),
+    Q('一昨日は、何時ごろに寝ましたか？'),
+    Q('最近行ったお店の名前を言えますか？'),
+    Q('最近覚えた人の名前はありますか？'),
+    Q('先月いちばん楽しかった日はいつですか？'),
+    Q('最近、天気に驚いた日はありましたか？'),
+    Q('今月はじめてやったことはありますか？'),
+    Q('最後に外食したのはどこですか？'),
+    Q('最近よく食べているものは何ですか？'),
+    Q('去年のM-1グランプリの優勝者を覚えていますか？'),
+    Q('去年の紅白歌合戦で、覚えている出場者はいますか？'),
+    Q('去年ヒットした映画のタイトルを言えますか？'),
+    Q('去年の今ごろ、流行していた食べ物は何でしたか？'),
+    Q('去年いちばん話題になったスポーツの出来事は何ですか？'),
+    Q('去年の「今年の漢字」を覚えていますか？'),
+    Q('去年のお正月は、どこで過ごしましたか？'),
+    Q('去年のクリスマスは、何をしていましたか？'),
+    Q('最近ニュースで見て、気になった話題は何ですか？'),
+    Q('去年の夏、いちばん暑かった日に何をしていましたか？'),
+    Q('一昨年に流行した曲を、何か思い出せますか？'),
+    Q('最近話題のドラマやアニメのタイトルを言えますか？'),
+    Q('去年の誕生日は、何をして過ごしましたか？'),
+    Q('去年いちばん遠くに出かけた場所はどこですか？'),
+    Q('小学六年生のころの担任の先生の名前は何ですか？'),
+    Q('中学一年生のとき、隣の席だった人は誰ですか？'),
+    Q('卒業した小学校の正式な名前を言えますか？'),
+    Q('はじめて買ってもらったゲーム機は何ですか？'),
+    Q('はじめて持った携帯電話の機種は何ですか？'),
+    Q('小学校の校歌の出だしを歌えますか？'),
+    Q('中学校の部活の顧問は誰でしたか？'),
+    Q('高校の最寄り駅はどこでしたか？'),
+    Q('はじめてのアルバイト先はどこですか？'),
+    Q('小学生のとき、何係でしたか？'),
+    Q('修学旅行の行き先はどこでしたか？'),
+    Q('はじめて行ったライブやコンサートは、誰のものでしたか？'),
+    Q('子どものころ、いちばん仲がよかった友だちの名字は何ですか？'),
+    Q('卒業文集に何を書いたか覚えていますか？'),
+    Q('はじめて飼ったペットの名前は何ですか？'),
+    Q('はじめて自分で買ったCDや本は何ですか？')
+  ]
+
+  const QPOOL = [...CHAPTERS.flatMap(c => c.lines.filter(l => typeof l === 'object' && l.q && !l.ctx)), ...EXTRA_Q]
+  let bag = []
+  function randomQuestion() {
+    // shuffle-bag: every question once before any repeats
+    if (!bag.length) bag = [...QPOOL].sort(() => Math.random() - 0.5)
+    return bag.pop()
+  }
+  // timers belong to a "generation", so restarting the campaign cancels pending lines
+  let gen = 0
+  const later = (fn, ms) => { const g = gen; return setTimeout(() => { if (g === gen) fn() }, ms) }
+  function nextLine() {
+    talk.cur = null
+    if (talk.queue.length) return talk.queue.shift()
+    if (talk.mode === 'campaign' && !talk.introDone) {
+      talk.cur = { intro: true, i: talk.i }
+      const t = INTRO[talk.i++]
+      if (talk.i >= INTRO.length) { talk.introDone = true; talk.i = 0 }
+      return t
+    }
+    if (talk.mode === 'campaign') {
+      if (talk.i >= STORY.length) return { end: true }
+      talk.cur = { intro: false, i: talk.i }
+      return STORY[talk.i++]
+    }
+    return talk.endless ? randomQuestion() : null
+  }
+  let hintTimer = 0, asked = 0
+  const F = location.hash === '#talkfast' ? 0.15 : 1 // test speed
+  // Type the words out like a program decoding them: each character flickers
+  // through a few random glyphs before it lands on the real one.
+  const GLYPH_WIDE = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン０１２３４５６７８９▓▒░◇◆■□'
+  const GLYPH_NARROW = '0123456789ABCDEF#%&*+=<>/'
+  let typeId = 0
+  function typeOut(text) {
+    const id = ++typeId
+    speech.textContent = ''
+    const chars = [...text].map(ch => {
+      const el = document.createElement('span')
+      el.className = 'ch wait'
+      el.textContent = ch
+      speech.appendChild(el)
+      const wide = /[^\x00-\xff]/.test(ch)
+      return { el, ch, pool: wide ? GLYPH_WIDE : GLYPH_NARROW, blank: /\s/.test(ch), state: 'wait', swap: 0 }
+    })
+    const STEP = 45 * F, SCR = 170 * F
+    const t0 = performance.now()
+    const frame = now => {
+      if (id !== typeId) return
+      const e = now - t0
+      let front = -1, done = true
+      chars.forEach((c, i) => {
+        const start = i * STEP, end = c.blank ? start : start + SCR
+        let st = e < start ? 'wait' : e < end ? 'scr' : 'ok'
+        if (st !== 'ok') done = false
+        if (st === 'scr') {
+          front = i
+          if (now > c.swap) { c.el.textContent = c.pool[Math.floor(Math.random() * c.pool.length)]; c.swap = now + 55 }
+        }
+        if (st !== c.state) {
+          c.state = st
+          if (st === 'ok') c.el.textContent = c.ch
+          c.el.className = 'ch ' + (st === 'ok' ? '' : st)
+        }
+      })
+      if (front >= 0) chars[front].el.classList.add('cur')
+      if (done) { chars.at(-1)?.el.classList.add('idle'); return }
+      requestAnimationFrame(frame)
+    }
+    requestAnimationFrame(frame)
+    return chars.length * STEP + SCR
+  }
+  function say(line) {
+    const text = typeof line === 'string' ? line : line.t
+    const question = typeof line === 'object' && line.q
+    speech.classList.toggle('ask', !!question)
+    const typing = typeOut(text)
+    speech.classList.add('on')
+    if (question) {
+      // wait for a tap; for the first few questions, a quiet reminder after a while
+      talk.waiting = true
+      asked++
+      clearTimeout(hintTimer)
+      if (F < 1) later(answered, 1200) // test mode answers by itself
+      if (asked <= 3) hintTimer = later(() => { if (talk.waiting) speech.insertAdjacentHTML('beforeend', '<small>思い出せたら、私をタップしてください</small>') }, 14000)
+      return
+    }
+    const hold = 4200 + text.length * 140
+    later(() => {
+      speech.classList.remove('on')
+      later(speakLoop, (1600 + 3500 + Math.random() * 2500) * F)
+    }, typing + hold * F)
+  }
+  function answered() {
+    if (!talk.waiting) return
+    talk.waiting = false
+    clearTimeout(hintTimer)
+    if (talk.mode === 'free' && talk.endless) countEndlessAnswer()
+    api?.burst()
+    sparkleSound()
+    speech.classList.remove('on')
+    later(() => {
+      speech.classList.remove('ask')
+      const typing = typeOut(nextPraise())
+      speech.classList.add('on')
+      later(() => {
+        speech.classList.remove('on')
+        later(speakLoop, (1600 + 2500 + Math.random() * 2000) * F)
+      }, typing + 2400 * F)
+    }, 900 * F)
+  }
+  // a quick rising sparkle of notes for the tap
+  // The tap: a soft gust of air (the speed burst) and two quiet, rounded
+  // notes ringing out into reverb. Pitches vary a little each time.
+  let tapVerb = null
+  const TAP_PAIRS = [[587.33, 880.0], [659.25, 987.77], [493.88, 739.99], [440.0, 659.25], [523.25, 783.99]]
+  let tapPair = 0
+  function sparkleSound() {
+    if (!bgmOn) return
+    try {
+      audio ??= new (window.AudioContext || window.webkitAudioContext)()
+      if (audio.state === 'suspended') audio.resume()
+      const ctx = audio, t = ctx.currentTime
+      if (!tapVerb) {
+        tapVerb = makeReverb(ctx, 3.5)
+        const vg = ctx.createGain()
+        vg.gain.value = 0.7
+        tapVerb.connect(vg).connect(ctx.destination)
+      }
+      const out = ctx.createBiquadFilter()
+      out.type = 'lowpass'; out.frequency.value = 2200; out.Q.value = 0.3
+      out.connect(ctx.destination); out.connect(tapVerb)
+      // gust: noise swept upward through a soft bandpass
+      const len = Math.floor(ctx.sampleRate * 1.4)
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+      const d = buf.getChannelData(0)
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1
+      const n = ctx.createBufferSource(); n.buffer = buf
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'; bp.Q.value = 0.8
+      bp.frequency.setValueAtTime(350, t)
+      bp.frequency.exponentialRampToValueAtTime(1500, t + 0.6)
+      bp.frequency.exponentialRampToValueAtTime(600, t + 1.4)
+      const ng = ctx.createGain()
+      ng.gain.setValueAtTime(0, t)
+      ng.gain.linearRampToValueAtTime(0.035, t + 0.35)
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.4)
+      n.connect(bp).connect(ng).connect(out)
+      n.start(t); n.stop(t + 1.45)
+      // two quiet notes, never the same pair twice in a row
+      let k; do { k = Math.floor(Math.random() * TAP_PAIRS.length) } while (k === tapPair)
+      tapPair = k
+      TAP_PAIRS[k].forEach((f, i) => {
+        const t0 = t + 0.08 + i * 0.16
+        for (const [m, v] of [[1, 0.04], [2, 0.006]]) {
+          const o = ctx.createOscillator(), g = ctx.createGain()
+          o.type = 'sine'; o.frequency.value = f * m
+          g.gain.setValueAtTime(0, t0)
+          g.gain.linearRampToValueAtTime(v, t0 + 0.03)
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.6)
+          o.connect(g).connect(out)
+          o.start(t0); o.stop(t0 + 2.7)
+        }
+      })
+    } catch (_) {}
+  }
+  // a tap (not a drag) near the fairy or on its words answers the question
+  let down = null
+  addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, t: performance.now() } }, true)
+  addEventListener('pointerup', e => {
+    if (!down || !talk.waiting || !api?.getFairyScreen) return
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y)
+    const quick = performance.now() - down.t < 450
+    down = null
+    if (moved > 14 || !quick || menu.contains(e.target)) return
+    const f = api.getFairyScreen()
+    const r = speech.getBoundingClientRect()
+    const onFairy = f.onScreen && Math.hypot(e.clientX - f.x, e.clientY - f.y) < 90
+    const onWords = e.clientX > r.left - 20 && e.clientX < r.right + 20 && e.clientY > r.top - 20 && e.clientY < r.bottom + 20
+    if (onFairy || onWords) answered()
+  }, true)
+  function speakLoop() {
+    const line = nextLine()
+    if (line?.go) talk.chapter = line.go
+    if (talk.cur) { talk.last = talk.cur; saveProgress() }
+    if (!line) { later(speakLoop, 1500); return } // free mode: stay quiet, check again soon
+    if (line.end) { enterFree(); later(speakLoop, 1500); return }
+    if (line.go) {
+      // move the sky to the next chapter's time, then carry on once it has settled
+      const p = api.presets.find(x => x.id === line.go)
+      if (p) {
+        api.goToTime(p.hours, p.id, true)
+        capChapter(line.go, api.lastTimeTarget())
+      }
+      later(speakLoop, 6500)
+      return
+    }
+    say(line)
+  }
+  // follow the fairy on screen, smoothly; fall back to the lower middle when it is out of view
+  function followFairy() {
+    requestAnimationFrame(followFairy)
+    if (!api?.getFairyScreen) return
+    const f = api.getFairyScreen()
+    const w = speech.offsetWidth, h = speech.offsetHeight
+    const m = 16
+    let x = f.onScreen ? f.x : innerWidth / 2
+    let y = f.onScreen ? f.y - Math.max(28, 900 / Math.max(f.dist, 1)) - h : innerHeight * 0.62
+    x = Math.min(innerWidth - m - w / 2, Math.max(m + w / 2, x))
+    y = Math.min(innerHeight - 120 - h, Math.max(70, y))
+    const p = talk.pos ?? (talk.pos = { x, y })
+    p.x += (x - p.x) * 0.06
+    p.y += (y - p.y) * 0.06
+    speech.style.transform = `translate(${(p.x - w / 2).toFixed(1)}px, ${p.y.toFixed(1)}px)`
+  }
+
+  // ---------------- pomodoro ----------------
+  // 25 min focus / 5 min break, a 15 min break after every 4th focus.
+  const FOCUS = 25 * 60, SHORT = 5 * 60, LONG = 15 * 60
+  const T = location.hash === '#pomotest' ? { FOCUS: 20, SHORT: 8, LONG: 12 } : { FOCUS, SHORT, LONG }
+  const GAME_HOURS_PER_SEC = location.hash === '#pomotest' ? 4 / 28 : 4 / (30 * 60)
+  // the sky always moves on slowly while you play (same pace as before: 4 hours per 30 minutes)
+  function syncFlow() { api?.setTimeFlow(GAME_HOURS_PER_SEC) }
+  const pomo = { running: false, phase: 'focus', endsAt: 0, left: T.FOCUS, total: T.FOCUS, paused: false, done: 0, timer: 0 }
+  const pomoEl = document.getElementById('pomo')
+  const pomoBar = document.getElementById('pomoBar')
+  const pomoTime = document.getElementById('pomoTime')
+  const pomoLabel = document.getElementById('pomoLabel')
+  const pomoDots = [...document.querySelectorAll('#pomoDots i')]
+  const toast = document.getElementById('toast')
+  let audio = null, toastTimer = 0
+
+  // ---------------- ambient music ----------------
+  // Generated live, never the same twice, and almost silent: a far-off sea
+  // breathing, a soft pad that drifts between a few open chords, and now and
+  // then a single glassy note. Nothing with a beat or a melody to follow.
+  let bgmOn = true
+  try { bgmOn = localStorage.getItem('sora-bgm') !== 'off' } catch (_) {}
+  const amb = { started: false, master: null, bright: null }
+  function makeReverb(ctx, seconds = 5) {
+    const len = Math.floor(ctx.sampleRate * seconds)
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate)
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c)
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3)
+    }
+    const v = ctx.createConvolver()
+    v.buffer = buf
+    return v
+  }
+  function startAmbient() {
+    if (amb.started) return
+    try {
+      audio ??= new (window.AudioContext || window.webkitAudioContext)()
+      if (audio.state === 'suspended') audio.resume()
+    } catch (_) { return }
+    amb.started = true
+    const ctx = audio, now = ctx.currentTime
+    const master = ctx.createGain()
+    master.gain.value = 0
+    master.connect(ctx.destination)
+    amb.master = master
+    const verb = makeReverb(ctx)
+    const verbGain = ctx.createGain()
+    verbGain.gain.value = 0.6
+    verb.connect(verbGain).connect(master)
+    // overall brightness: a little more closed at night
+    const tone = ctx.createBiquadFilter()
+    tone.type = 'lowpass'; tone.frequency.value = 1400; tone.Q.value = 0.3
+    tone.connect(master)
+    tone.connect(verb)
+    amb.bright = tone
+
+    const rnd = (lo, hi) => lo + Math.random() * (hi - lo)
+    // Each layer comes and goes on its own: it fades in, stays a while, fades
+    // out and rests. Often only one is playing, and sometimes nothing is.
+    function cycle(bus, on, off, fadeIn, fadeOut, onStart) {
+      const go = () => {
+        onStart?.()
+        const t = ctx.currentTime, hold = rnd(...on)
+        bus.gain.cancelScheduledValues(t)
+        bus.gain.setValueAtTime(bus.gain.value, t)
+        bus.gain.linearRampToValueAtTime(1, t + fadeIn)
+        bus.gain.setValueAtTime(1, t + fadeIn + hold)
+        bus.gain.linearRampToValueAtTime(0, t + fadeIn + hold + fadeOut)
+        setTimeout(go, (fadeIn + hold + fadeOut + rnd(...off)) * 1000)
+      }
+      return go
+    }
+
+    // 1) far-off sea: brown noise, slowly swelling like waves on a distant shore
+    const nlen = ctx.sampleRate * 4
+    const nbuf = ctx.createBuffer(1, nlen, ctx.sampleRate)
+    const nd = nbuf.getChannelData(0)
+    let last = 0
+    for (let i = 0; i < nlen; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; nd[i] = last * 3.5 }
+    const noise = ctx.createBufferSource()
+    noise.buffer = nbuf; noise.loop = true
+    const nf = ctx.createBiquadFilter()
+    nf.type = 'lowpass'; nf.frequency.value = 420; nf.Q.value = 0.2
+    const ng = ctx.createGain()
+    ng.gain.value = 0.014
+    const swell = ctx.createOscillator(), swellAmt = ctx.createGain()
+    swell.frequency.value = 1 / 9.5 // one wave every ~9.5 s
+    swellAmt.gain.value = 0.01
+    swell.connect(swellAmt).connect(ng.gain)
+    const seaBus = ctx.createGain()
+    seaBus.gain.value = 0
+    noise.connect(nf).connect(ng).connect(seaBus).connect(tone)
+    noise.start(now); swell.start(now)
+    // on for 40–90 s, then away for 30–80 s
+    setTimeout(cycle(seaBus, [40, 90], [30, 80], 12, 14), rnd(6, 20) * 1000)
+
+    // 2) pad: four soft voices; each phrase picks a new chord, plays a while, then rests
+    const CHORDS = [
+      [146.83, 220.0, 329.63, 369.99],  // D  A  E  F#
+      [130.81, 196.0, 293.66, 329.63],  // C  G  D  E
+      [110.0, 164.81, 246.94, 277.18],  // A  E  B  C#
+      [123.47, 185.0, 277.18, 329.63],  // B  F# C# E
+      [98.0, 146.83, 220.0, 293.66]     // G  D  A  D
+    ]
+    const padBus = ctx.createGain()
+    padBus.gain.value = 0
+    padBus.connect(tone)
+    const voices = CHORDS[0].map((f, i) => {
+      const o = ctx.createOscillator()
+      o.type = i % 2 ? 'sine' : 'triangle'
+      o.frequency.value = f
+      o.detune.value = (Math.random() - 0.5) * 8
+      const g = ctx.createGain()
+      g.gain.value = 0
+      const lfo = ctx.createOscillator(), lfoAmt = ctx.createGain()
+      lfo.frequency.value = 1 / (17 + i * 7.3) // slow, unrelated cycles
+      lfoAmt.gain.value = 0.006
+      const base = ctx.createConstantSource ? ctx.createConstantSource() : null
+      if (base) { base.offset.value = 0.008; base.connect(g.gain); base.start(now) }
+      lfo.connect(lfoAmt).connect(g.gain)
+      o.connect(g).connect(padBus)
+      o.start(now); lfo.start(now + i * 1.7)
+      return o
+    })
+    let chord = 0
+    const newChord = () => {
+      // change chord only while silent, and never repeat the last one
+      let c; do { c = Math.floor(Math.random() * CHORDS.length) } while (c === chord)
+      chord = c
+      voices.forEach((o, i) => o.frequency.setValueAtTime(CHORDS[chord][i], ctx.currentTime))
+    }
+    // a phrase of 20–45 s, then 20–60 s of rest
+    setTimeout(cycle(padBus, [20, 45], [20, 60], 9, 12, newChord), 2000)
+
+    // 3) once in a long while, a single glassy note far away
+    const NOTES = [587.33, 659.25, 739.99, 880.0, 987.77, 1174.66]
+    function glass() {
+      const t = ctx.currentTime
+      const f = NOTES[Math.floor(Math.random() * NOTES.length)]
+      for (const [m, v] of [[1, 0.014], [2.01, 0.003]]) {
+        const o = ctx.createOscillator(), g = ctx.createGain()
+        o.type = 'sine'; o.frequency.value = f * m
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(v, t + 0.04)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 5)
+        o.connect(g).connect(tone)
+        o.start(t); o.stop(t + 5.2)
+      }
+      setTimeout(glass, rnd(30, 75) * 1000)
+    }
+    setTimeout(glass, rnd(20, 40) * 1000)
+
+    applyBgm(true)
+  }
+  // From chapter 3 of the campaign on, recorded tracks take over from the
+  // generated ambient, one per chapter; everything crossfades.
+  // Every piece of music in the game. In free mode the player picks one from
+  // the ♪ button. 'campaign' songs are earned by finishing the campaign;
+  // 'endless' songs are earned in this order, one per 5 endless answers.
+  // level evens out how loud the recordings are.
+  const LIBRARY = [
+    { id: 'ambient', title: '環境音', note: 'その場で生まれる、静かな音', src: null },
+    { id: 'weightless', title: 'Weightless Gliding', src: 'bgm3.mp4', level: 0.8, how: 'campaign' },
+    { id: 'shore', title: 'Gentle Shore Waves', src: 'bgm4.mp4', level: 0.45, how: 'campaign' },
+    { id: 'openwater', title: 'Open Water', src: 'bgm5.mp4', level: 0.46, how: 'endless' },
+    { id: 'platehaze', title: 'Plate-Reverb Haze', src: 'bgm6.mp4', level: 0.34, how: 'endless' },
+    { id: 'uchu', title: '宇宙の静寂', src: 'bgm7.mp4', level: 0.47, how: 'endless' }
+  ]
+  const TRACKS = { night: 'bgm3.mp4', dawn: 'bgm4.mp4' } // campaign chapters 3 and 4
+  const LEVEL = Object.fromEntries(LIBRARY.filter(t => t.src).map(t => [t.src, t.level]))
+  const unlocked = new Set(['ambient'])
+  let picked = 'ambient'
+  try {
+    JSON.parse(localStorage.getItem('sora-tracks') || '[]').forEach(id => unlocked.add(id))
+    picked = localStorage.getItem('sora-track') || 'ambient'
+  } catch (_) {}
+  if (!unlocked.has(picked) || !LIBRARY.some(t => t.id === picked)) picked = 'ambient'
+  function saveTracks() {
+    try {
+      localStorage.setItem('sora-tracks', JSON.stringify([...unlocked]))
+      localStorage.setItem('sora-track', picked)
+    } catch (_) {}
+  }
+  const tracks = {} // src -> { el, gain, primed, stop }
+  const wantTrack = () => talk.mode === 'campaign'
+    ? TRACKS[talk.chapter] || null
+    : LIBRARY.find(t => t.id === picked)?.src || null
+  function getTrack(src) {
+    if (tracks[src] || !audio) return tracks[src]
+    const el = new Audio(src)
+    el.loop = true; el.preload = 'auto'; el.playsInline = true
+    el.setAttribute('playsinline', '')
+    const tr = { el, gain: null, primed: false, stop: 0 }
+    try {
+      tr.gain = audio.createGain()
+      tr.gain.gain.value = 0
+      audio.createMediaElementSource(el).connect(tr.gain).connect(audio.destination)
+    } catch (_) { tr.gain = null; el.volume = 0 }
+    return (tracks[src] = tr)
+  }
+  // iPhone only lets a sound element start from a tap, so start and pause each
+  // one once on the first tap; after that they can be started from code.
+  function primeTrack() {
+    for (const src of new Set([...Object.values(TRACKS), ...LIBRARY.filter(t => t.src && unlocked.has(t.id)).map(t => t.src)])) {
+      const tr = getTrack(src)
+      if (!tr || tr.primed) continue
+      tr.primed = true
+      if (bgmOn && wantTrack() === src) continue
+      tr.el.play()?.then?.(() => { if (!(bgmOn && wantTrack() === src)) tr.el.pause() }).catch(() => { tr.primed = false })
+    }
+  }
+  // ---------------- music library: the ♪ button (free mode) ----------------
+  const musicNav = document.getElementById('music')
+  const musicBtn = document.getElementById('musicBtn')
+  const musicPanel = document.getElementById('musicPanel')
+  function renderMusic() {
+    musicPanel.textContent = ''
+    const h = document.createElement('h2')
+    h.textContent = 'BGM'
+    musicPanel.appendChild(h)
+    for (const t of LIBRARY) {
+      const has = unlocked.has(t.id)
+      const el = document.createElement(has ? 'button' : 'div')
+      el.className = 'time-opt' + (has ? '' : ' locked')
+      if (has) {
+        el.type = 'button'
+        const now = t.id === picked
+        el.setAttribute('aria-current', String(now))
+        el.innerHTML = '<div>' + t.title + (t.note ? '<small>' + t.note + '</small>' : '') + '</div><span>' + (now ? '♪ 再生中' : '') + '</span>'
+        el.addEventListener('click', () => { pickTrack(t.id); el.blur() })
+      } else {
+        el.setAttribute('aria-disabled', 'true')
+        el.innerHTML = '<div>' + t.title + '<small>' + (t.how === 'campaign' ? 'キャンペーンをクリアすると解放' : 'エンドレスモードを遊ぶと解放') + '</small></div><span class="lock" aria-label="ロック中"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg></span>'
+      }
+      musicPanel.appendChild(el)
+    }
+    if (LIBRARY.some(t => t.how === 'endless')) {
+      const n = document.createElement('p')
+      n.className = 'music-note'
+      n.textContent = 'エンドレストレーニングで5問答えるごとに、上から順に1曲ずつ解放されます'
+      musicPanel.appendChild(n)
+    }
+  }
+  function pickTrack(id) {
+    picked = id
+    saveTracks()
+    // choosing a song means you want to hear it
+    if (!bgmOn) { bgmOn = true; try { localStorage.setItem('sora-bgm', 'on') } catch (_) {}; relabelBgm() }
+    startAmbient()
+    applyBgm(false)
+    renderMusic()
+  }
+  function openMusic() { close(); renderMusic(); musicPanel.hidden = false; musicBtn.setAttribute('aria-expanded', 'true') }
+  function closeMusic() { musicPanel.hidden = true; musicBtn.setAttribute('aria-expanded', 'false') }
+  musicBtn.addEventListener('click', () => { musicPanel.hidden ? openMusic() : closeMusic(); musicBtn.blur() })
+  document.addEventListener('pointerdown', e => { if (!musicNav.contains(e.target)) closeMusic() })
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMusic() })
+
+  // the "new music" dialog; several unlocks show one after another
+  const unlockBox = document.getElementById('unlock')
+  const unlockQueue = []
+  unlockBox.addEventListener('pointerdown', e => e.stopPropagation())
+  function showUnlock(title, songs, note) {
+    unlockQueue.push({ title, songs, note })
+    if (unlockQueue.length === 1) nextUnlock()
+  }
+  function nextUnlock() {
+    const u = unlockQueue[0]
+    if (!u) return
+    // wait for other dialogs to close first
+    if (!document.getElementById('inapp').hidden || !document.getElementById('soundAsk').hidden) { setTimeout(nextUnlock, 500); return }
+    document.getElementById('unlockH').textContent = u.title
+    document.getElementById('unlockSongs').innerHTML = u.songs.map(t => '♪ ' + t).join('<br>')
+    document.getElementById('unlockP').textContent = u.note
+    unlockBox.hidden = false
+  }
+  document.getElementById('unlockOk').addEventListener('click', () => {
+    unlockBox.hidden = true
+    unlockQueue.shift()
+    setTimeout(nextUnlock, 400)
+  })
+  // finishing the campaign: the songs from chapters 3 and 4
+  function grantCampaignSongs() {
+    const got = LIBRARY.filter(t => t.how === 'campaign' && !unlocked.has(t.id))
+    if (!got.length) return
+    got.forEach(t => unlocked.add(t.id))
+    saveTracks()
+    renderMusic()
+    showUnlock(got.length > 1 ? got.length + '曲の音楽を手に入れました' : '新しい音楽を手に入れました',
+      got.map(t => t.title), '右上の♪ボタンから、好きな曲を選べます')
+  }
+  // endless training: a new song every 5 answers, played right away
+  let endlessAnswers = 0
+  try { endlessAnswers = +localStorage.getItem('sora-endless-answers') || 0 } catch (_) {}
+  function countEndlessAnswer() {
+    endlessAnswers++
+    try { localStorage.setItem('sora-endless-answers', String(endlessAnswers)) } catch (_) {}
+    if (endlessAnswers % 5) return
+    const t = LIBRARY.find(x => x.how === 'endless' && !unlocked.has(x.id))
+    if (!t) return
+    unlocked.add(t.id)
+    picked = t.id
+    saveTracks()
+    applyBgm(false)
+    renderMusic()
+    showUnlock('新しい音楽を手に入れました', [t.title], bgmOn ? 'いま流れているのが、この曲です' : 'サウンドをオンにすると聴けます')
+  }
+
+  // First visit: ask whether to play sound at all. The answer is remembered
+  // (and can be changed in the menu). Choosing is a tap, so sound can start.
+  let relabelBgm = () => {}
+  function askSound() {
+    let stored = null
+    try { stored = localStorage.getItem('sora-bgm') } catch (_) {}
+    if (stored) return Promise.resolve()
+    bgmOn = false // nothing plays until they choose
+    relabelBgm()
+    return new Promise(done => {
+      const box = document.getElementById('soundAsk')
+      const inapp = document.getElementById('inapp')
+      const show = () => { if (!inapp.hidden) { setTimeout(show, 300); return } box.hidden = false }
+      show()
+      box.addEventListener('pointerdown', e => e.stopPropagation())
+      const pick = on => {
+        bgmOn = on
+        try { localStorage.setItem('sora-bgm', on ? 'on' : 'off') } catch (_) {}
+        box.hidden = true
+        if (on) startAmbient()
+        applyBgm(false)
+        relabelBgm()
+        done()
+      }
+      document.getElementById('soundOn').addEventListener('click', () => pick(true), { once: true })
+      document.getElementById('soundOff').addEventListener('click', () => pick(false), { once: true })
+    })
+  }
+  function applyBgm(fadeSlow) {
+    const want = bgmOn ? wantTrack() : null
+    if (amb.master) {
+      const t = audio.currentTime
+      amb.master.gain.cancelScheduledValues(t)
+      amb.master.gain.setTargetAtTime(bgmOn && !want ? 0.9 : 0, t, fadeSlow ? 3 : 0.6)
+    }
+    if (!audio) return
+    const t = audio.currentTime, tc = fadeSlow ? 3 : 0.6
+    if (want) getTrack(want)
+    for (const [src, tr] of Object.entries(tracks)) {
+      clearTimeout(tr.stop)
+      if (src === want) {
+        if (tr.el.paused) tr.el.play()?.catch?.(() => {})
+        if (tr.gain) { tr.gain.gain.cancelScheduledValues(t); tr.gain.gain.setTargetAtTime(LEVEL[src], t, tc) }
+        else tr.el.volume = LEVEL[src]
+      } else if (!tr.el.paused) {
+        if (tr.gain) { tr.gain.gain.cancelScheduledValues(t); tr.gain.gain.setTargetAtTime(0, t, tc) }
+        else tr.el.volume = 0
+        tr.stop = setTimeout(() => tr.el.pause(), tc * 5000)
+      }
+    }
+  }
+  // follow the campaign: switch when the chapter or mode changes
+  let lastWant = null
+  setInterval(() => {
+    const w = wantTrack()
+    if (w !== lastWant) { lastWant = w; if (audio) applyBgm(true) }
+  }, 1000)
+  // a little darker and softer at night
+  setInterval(() => {
+    if (!amb.bright || !api?.getSky) return
+    const sun = api.getSky().sun
+    const day = Math.min(1, Math.max(0, (sun + 0.1) / 0.4))
+    amb.bright.frequency.setTargetAtTime(700 + 900 * day, audio.currentTime, 4)
+  }, 2000)
+  // browsers only allow sound after a tap or key press
+  const unlock = () => {
+    if (bgmOn) startAmbient(); else if (audio?.state === 'suspended') audio.resume()
+    if (audio) { primeTrack(); const w = bgmOn && wantTrack(); if (w && tracks[w]?.el.paused) applyBgm(true) }
+  }
+  addEventListener('pointerdown', unlock, { capture: true })
+  addEventListener('keydown', unlock, { capture: true })
+  // rest the audio while the page is hidden
+  document.addEventListener('visibilitychange', () => {
+    if (!audio) return
+    if (document.visibilityState === 'hidden') { audio.suspend?.(); for (const tr of Object.values(tracks)) tr.el.pause() }
+    else { audio.resume?.(); if (bgmOn && wantTrack()) applyBgm(false) }
+  })
+  function chime(kind) {
+    // a soft synthesized bell: two partials with a long, gentle decay
+    if (!bgmOn) return
+    try {
+      audio ??= new (window.AudioContext || window.webkitAudioContext)()
+      if (audio.state === 'suspended') audio.resume()
+      const notes = kind === 'break' ? [659.25, 987.77] : [523.25, 783.99, 1046.5]
+      notes.forEach((f, i) => {
+        const t0 = audio.currentTime + i * 0.42
+        for (const [mult, vol] of [[1, 0.16], [2.76, 0.035]]) {
+          const o = audio.createOscillator(), g = audio.createGain()
+          o.type = 'sine'; o.frequency.value = f * mult
+          g.gain.setValueAtTime(0, t0)
+          g.gain.linearRampToValueAtTime(vol, t0 + 0.015)
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.6)
+          o.connect(g).connect(audio.destination)
+          o.start(t0); o.stop(t0 + 2.7)
+        }
+      })
+    } catch (_) {}
+  }
+  function showToast(html) {
+    toast.innerHTML = html
+    toast.classList.add('on')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => toast.classList.remove('on'), 4200)
+  }
+  const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0')
+  function drawPomo() {
+    const left = pomo.paused ? pomo.left : Math.max(0, (pomo.endsAt - Date.now()) / 1000)
+    pomoTime.textContent = mmss(Math.ceil(left))
+    pomoBar.setAttribute('stroke-dashoffset', String(94.25 * (1 - left / pomo.total)))
+    pomoLabel.textContent = pomo.paused ? '一時停止中' : pomo.phase === 'focus' ? '集中' : '休憩'
+    pomoEl.classList.toggle('break', pomo.phase !== 'focus')
+    pomoEl.classList.toggle('paused', pomo.paused)
+    pomoDots.forEach((d, i) => d.classList.toggle('done', i < pomo.done % 4 || (pomo.done > 0 && pomo.done % 4 === 0 && pomo.phase !== 'focus')))
+    return left
+  }
+  function setPhase(phase) {
+    pomo.phase = phase
+    pomo.total = phase === 'focus' ? T.FOCUS : phase === 'long' ? T.LONG : T.SHORT
+    pomo.endsAt = Date.now() + pomo.total * 1000
+    pomo.paused = false
+  }
+  function tick() {
+    if (!pomo.running) return
+    if (drawPomo() > 0 || pomo.paused) return
+    if (pomo.phase === 'focus') {
+      pomo.done++
+      const long = pomo.done % 4 === 0
+      setPhase(long ? 'long' : 'short')
+      chime('break')
+      talk.queue.unshift(long ? 'お疲れさまでした。ゆっくり休みましょう。' : 'トレーニングの休憩です。目を閉じて、深呼吸してみてください。')
+      showToast(long ? 'おつかれさま。長めの休憩をどうぞ<small>15分</small>' : 'ひと休みしよう<small>5分</small>')
+    } else {
+      setPhase('focus')
+      chime('focus')
+      showToast('もう一度、集中しよう<small>25分</small>')
+    }
+    drawPomo()
+  }
+  function pomoStart() {
+    pomo.running = true
+    pomo.done = 0
+    setPhase('focus')
+    pomoEl.hidden = false
+    clearInterval(pomo.timer)
+    pomo.timer = setInterval(tick, 250)
+    chime('focus') // also unlocks sound for later, since this comes from a tap
+    showToast('集中スタート<small>25分</small>')
+    drawPomo()
+    labelPomo()
+    syncFlow()
+  }
+  function pomoStop() {
+    pomo.running = false
+    clearInterval(pomo.timer)
+    pomoEl.hidden = true
+    labelPomo()
+    syncFlow()
+  }
+  pomoEl.addEventListener('click', () => {
+    if (!pomo.running) return
+    if (pomo.paused) { pomo.endsAt = Date.now() + pomo.left * 1000; pomo.paused = false }
+    else { pomo.left = Math.max(0, (pomo.endsAt - Date.now()) / 1000); pomo.paused = true }
+    drawPomo()
+    syncFlow()
+    pomoEl.blur()
+  })
+  function labelPomo() {
+    if (!pomoItem) return
+    pomoItem.innerHTML = '<div>ポモドーロ<small>集中25分・休憩5分</small></div><span>' + (pomo.running ? '止める' : '始める') + '</span>'
+  }
+  // ---- remembering where the campaign got to ----
+  // The line on screen (or about to be), the chapter, and the sky, so a later
+  // visit picks up from the same question in the same light.
+  function saveProgress() {
+    if (talk.mode !== 'campaign' || !talk.last || !api) return
+    const st = api.getState()
+    try {
+      localStorage.setItem('sora-progress', JSON.stringify({
+        introDone: !talk.last.intro, i: talk.last.i, chapter: talk.chapter,
+        hours: api.getHours(), yaw: st.yaw
+      }))
+    } catch (_) {}
+  }
+  function clearProgress() { try { localStorage.removeItem('sora-progress') } catch (_) {} }
+  let progress = null
+  if (talk.mode === 'campaign') {
+    try { progress = JSON.parse(localStorage.getItem('sora-progress') || 'null') } catch (_) {}
+    if (progress && !(Number.isFinite(progress.i) && Number.isFinite(progress.hours) && CHAPTER_TIMES.includes(progress.chapter))) progress = null
+  }
+  function capFromProgress() {
+    // the chapter started at its own time on or before the saved hour
+    const start = api.presets.find(x => x.id === progress.chapter).hours
+    const back = (((progress.hours - start) % 24) + 24) % 24
+    capChapter(progress.chapter, progress.hours - back)
+  }
+  addEventListener('pagehide', saveProgress)
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveProgress() })
+  setInterval(saveProgress, 15000)
+  function hush() {
+    gen++
+    talk.waiting = false
+    clearTimeout(hintTimer)
+    speech.classList.remove('on', 'ask')
+  }
+  function enterFree() {
+    talk.mode = 'free'
+    clearProgress()
+    try { localStorage.setItem('sora-campaign', 'done') } catch (_) {}
+    api.setTimeCap(null)
+    refreshMenu()
+    showToast('フリーモード<small>右上のメニューから、時間帯を選べるよ</small>')
+    setTimeout(grantCampaignSongs, 4500)
+  }
+  function startCampaign() {
+    hush()
+    Object.assign(talk, { mode: 'campaign', queue: [], i: 0, introDone: false, chapter: 'noon', last: null })
+    clearProgress()
+    // back in the campaign: a reload should continue it, not drop into free mode
+    try { localStorage.setItem('sora-campaign', 'playing') } catch (_) {}
+    const noon = api.presets.find(x => x.id === 'noon')
+    api.goToTime(noon.hours, 'noon')
+    capChapter('noon', api.lastTimeTarget())
+    refreshMenu()
+    later(speakLoop, 4000)
+  }
+  function setEndless(on) {
+    talk.endless = on
+    try { localStorage.setItem('sora-endless', on ? 'on' : 'off') } catch (_) {}
+    if (!on && talk.mode === 'free') { hush(); later(speakLoop, 1500) }
+  }
+  async function boot(state) {
+    // keep the same canvas element: Safari on iPhone may not show a newly
+    // inserted WebGPU canvas until something else repaints the page
+    const canvas = document.getElementById('sky')
+    api = await start(canvas, onEvent, { hq, state })
+    syncFlow()
+    if (talk.mode !== 'campaign') api.setTimeCap(null)
+    else if (talk.capValue === undefined) progress ? capFromProgress() : capChapter('noon', api.getState().hoursTotal)
+    else api.setTimeCap(talk.capValue)
+    nudge()
+  }
+  // Opening the menu (a blurred glass panel over the canvas) made the sea
+  // appear, so briefly do the same with an invisible glass sliver.
+  function nudge() {
+    const g = document.createElement('div')
+    g.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none;-webkit-backdrop-filter:blur(0.5px);backdrop-filter:blur(0.5px);opacity:0.01;z-index:4'
+    document.body.appendChild(g)
+    let n = 0
+    const t = setInterval(() => {
+      g.hidden = !g.hidden
+      if (++n > 40) { clearInterval(t); g.remove() }
+    }, 150)
+  }
+  function buildMenu() {
+    panel.querySelectorAll('.time-opt, hr').forEach(el => el.remove())
+    opts = api.presets.map(p => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'time-opt'
+      b.innerHTML = p.label + '<span>' + fmt(p.hours) + '</span>'
+      // blur afterwards so Space goes back to boosting instead of pressing the button
+      b.addEventListener('click', () => { api.goToTime(p.hours, p.id); mark(p.id); close(); b.blur(); btn.blur() })
+      panel.appendChild(b)
+      return { p, b }
+    })
+    // free mode only: replay the campaign, endless training
+    const hrFree = document.createElement('hr')
+    panel.appendChild(hrFree)
+    const replay = document.createElement('button')
+    replay.type = 'button'
+    replay.className = 'time-opt'
+    replay.innerHTML = '<div>キャンペーンをもう一度<small>最初のあいさつから</small></div><span>はじめる</span>'
+    replay.addEventListener('click', () => { startCampaign(); close(); replay.blur(); btn.blur() })
+    panel.appendChild(replay)
+    const endless = document.createElement('label')
+    endless.className = 'time-opt check-opt'
+    endless.innerHTML = '<div>エンドレストレーニング<small>ランダムな質問がずっと続く</small></div><input type="checkbox" id="endless">'
+    const box = endless.querySelector('input')
+    box.checked = talk.endless
+    box.addEventListener('change', () => { setEndless(box.checked); box.blur() })
+    panel.appendChild(endless)
+    const hrQ = document.createElement('hr')
+    panel.appendChild(hrQ)
+    freeOnly = [document.getElementById('timeTitle'), ...opts.map(o => o.b), hrFree, replay, endless, hrQ]
+    q = document.createElement('button')
+    q.type = 'button'
+    q.className = 'time-opt'
+    panel.appendChild(q)
+    q.addEventListener('click', switchQuality)
+    const bgmItem = document.createElement('button')
+    bgmItem.type = 'button'
+    bgmItem.className = 'time-opt'
+    const labelBgm = () => { bgmItem.innerHTML = '<div>サウンド<small>静かな音楽と効果音</small></div><span>' + (bgmOn ? 'オン' : 'オフ') + '</span>'; bgmItem.setAttribute('aria-pressed', String(bgmOn)) }
+    bgmItem.addEventListener('click', () => {
+      bgmOn = !bgmOn
+      try { localStorage.setItem('sora-bgm', bgmOn ? 'on' : 'off') } catch (_) {}
+      if (bgmOn) startAmbient()
+      applyBgm(false)
+      labelBgm(); bgmItem.blur(); btn.blur()
+    })
+    labelBgm()
+    relabelBgm = labelBgm
+    panel.appendChild(bgmItem)
+    // (the pomodoro timer is no longer offered in the menu)
+    labelQuality()
+    refreshMenu()
+  }
+  let freeOnly = []
+  function refreshMenu() {
+    freeOnly.forEach(el => { el.hidden = talk.mode !== 'free' })
+    musicNav.hidden = talk.mode !== 'free'
+    if (talk.mode !== 'free') closeMusic()
+  }
+  function labelQuality(busy) {
+    q.setAttribute('aria-pressed', String(hq))
+    q.disabled = !!busy
+    q.innerHTML = '<div>高画質<small>本物の波のシミュレーション</small></div><span>' + (busy ? '切替中…' : hq ? 'オン' : 'オフ') + '</span>'
+  }
+  // switch in place (no page reload), keeping the time of day and where you face
+  async function switchQuality() {
+    const state = api.getState()
+    hq = !hq
+    try { localStorage.setItem('sora-hq', hq ? 'on' : 'off') } catch (_) {}
+    labelQuality(true)
+    api.dispose()
+    try {
+      await boot(state)
+    } catch (err) {
+      console.error(err)
+      hq = !hq
+      try { localStorage.setItem('sora-hq', hq ? 'on' : 'off') } catch (_) {}
+      await boot(state)
+    }
+    labelQuality()
+    close(); q.blur(); btn.blur()
+  }
+  function mark(id) { opts.forEach(o => o.b.setAttribute('aria-current', String(o.p.id === id))) }
+  function nearest() {
+    const h = api.getHours()
+    let best = null, bd = 99
+    for (const o of opts) { const d = Math.min(Math.abs(o.p.hours - h), 24 - Math.abs(o.p.hours - h)); if (d < bd) { bd = d; best = o.p.id } }
+    return bd < 0.3 ? best : null
+  }
+  function open() { closeMusic(); mark(nearest()); panel.hidden = false; btn.setAttribute('aria-expanded', 'true') }
+  function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false') }
+
+  try {
+    if (hq) msg.innerHTML = '空と波を計算しています…'
+    ;({ start } = await import('./sora.js'))
+    // pick up a campaign left unfinished last time
+    if (progress) {
+      Object.assign(talk, { introDone: progress.introDone, i: progress.i, chapter: progress.chapter })
+      if (progress.introDone || progress.i > 0) talk.queue.push('おかえりなさい。前回の続きから再開します。')
+    }
+    await boot(progress ? { hoursTotal: progress.hours, yaw: progress.yaw ?? 0, y: 40 } : null)
+    buildMenu()
+    btn.addEventListener('click', () => (panel.hidden ? open() : close()))
+    document.addEventListener('pointerdown', e => { if (!menu.contains(e.target)) close() })
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') close() })
+    menu.hidden = false
+    requestAnimationFrame(followFairy)
+    await askSound()
+    if (saved.done) setTimeout(grantCampaignSongs, 2500)
+    later(speakLoop, 4000)
+  } catch (err) {
+    console.error(err)
+    msg.innerHTML = 'この端末では空を描けませんでした<small>新しめのブラウザ（Safari 26 / Chrome）で開いてみてください</small>'
+  }
+</script>
